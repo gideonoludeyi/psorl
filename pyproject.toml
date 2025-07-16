@@ -1,0 +1,10 @@
+[project]
+name = "psorl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pymoo>=0.6.1.5",
+    "torch>=2.7.1",
+]
