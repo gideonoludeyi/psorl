@@ -5,9 +5,9 @@ import numpy as np
 import torch
 from pymoo.algorithms.soo.nonconvex.pso import PSO
 from pymoo.core.population import Population
-from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
-from .agent import ActorCritic, ReplayBuffer
+from .agent import ReplayBuffer
+from .stochastic_actor_critic_learning import StochasticActorCriticLearning
 from .problem import TheProblem
 
 seed = 0
@@ -25,13 +25,13 @@ def experiment(*, device=None, verbose=False):
     observation_dim = env.observation_space.shape[0]
 
     agents = [
-        ActorCritic(state_dim=observation_dim, action_dim=action_dim, device=device)
+        StochasticActorCriticLearning(state_dim=observation_dim, action_dim=action_dim, device=device)
         for _ in range(25)
     ]
 
     vector_encoded_actors = np.asarray(
         [
-            parameters_to_vector(agent.actor.parameters()).detach().cpu().numpy()
+            agent.get_actor_parameters()
             for agent in agents
         ]
     )
@@ -87,31 +87,15 @@ def experiment(*, device=None, verbose=False):
             if stage == 1:  # (optimize Pi by via RL)
                 actor_params = pop[i].X
                 agent = agents[i]
-                vector_to_parameters(
-                    torch.FloatTensor(actor_params).to(device), agent.actor.parameters()
-                )
+                agent.set_actor_parameters(actor_params)
                 agent.update(replay_buffer=replay_buffer, batch_size=128)
-                pop[i].set(
-                    "X",
-                    parameters_to_vector(agent.actor.parameters())
-                    .detach()
-                    .cpu()
-                    .numpy(),
-                )
+                pop[i].set("X", agent.get_actor_parameters())
             elif stage == 2:  # (optimize Pb via RL)
                 actor_params = pop[b].X
                 agent = agents[b]
-                vector_to_parameters(
-                    torch.FloatTensor(actor_params).to(device), agent.actor.parameters()
-                )
+                agent.set_actor_parameters(actor_params)
                 agent.update(replay_buffer=replay_buffer, batch_size=128)
-                pop[b].set(
-                    "X",
-                    parameters_to_vector(agent.actor.parameters())
-                    .detach()
-                    .cpu()
-                    .numpy(),
-                )
+                pop[b].set("X", agent.get_actor_parameters())
         if L[e] > L[b] or stage == 2:
             e = b
         # ask-and-tell is inverted because `ask()` does the PSO update

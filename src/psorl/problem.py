@@ -1,12 +1,12 @@
 import gymnasium as gym
 import torch
 from pymoo.core.problem import Problem
-from torch.nn.utils import vector_to_parameters
 
-from .agent import ActorCritic, ReplayBuffer
+from .agent import ReplayBuffer
+from .rl_algorithm import RLAlgorithm
 
 
-def run_episode(agent: ActorCritic, env: gym.Env, replay_buffer: ReplayBuffer):
+def run_episode(agent: RLAlgorithm, env: gym.Env, replay_buffer: ReplayBuffer):
     """evaluate fitness of actor's policy on an environment"""
     total_reward = 0.0
     steps = 0
@@ -28,7 +28,7 @@ class TheProblem(Problem):
     def __init__(
         self,
         env: gym.Env,
-        agents: list[ActorCritic],
+        agents: list[RLAlgorithm],
         replay_buffer: ReplayBuffer,
         device: torch.device,
         *args,
@@ -45,9 +45,7 @@ class TheProblem(Problem):
         F = []
         steps_list = []
         for agent, x in zip(self.agents, X):
-            vector_to_parameters(
-                torch.FloatTensor(x).to(self.device), agent.actor.parameters()
-            )
+            agent.set_actor_parameters(x)
             total_reward, steps = run_episode(
                 agent=agent, env=self.env, replay_buffer=self.replay_buffer
             )
