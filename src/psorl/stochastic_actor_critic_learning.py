@@ -1,11 +1,11 @@
+import numpy as np
 import torch
 import torch.nn.functional as F
-import numpy as np
 from torch.nn.utils import parameters_to_vector, vector_to_parameters
 
-from .rl_algorithm import RLAlgorithm
+from .agent import ReplayBuffer
 from .networks import Actor, Critic
-from .agent import ReplayBuffer # ReplayBuffer is still in agent.py
+from .rl_algorithm import RLAlgorithm
 
 
 class StochasticActorCriticLearning(RLAlgorithm):
@@ -67,4 +67,6 @@ class StochasticActorCriticLearning(RLAlgorithm):
         return parameters_to_vector(self.actor.parameters()).detach().cpu().numpy()
 
     def set_actor_parameters(self, params: np.ndarray) -> None:
-        vector_to_parameters(torch.FloatTensor(params).to(self.device), self.actor.parameters())
+        vector_to_parameters(
+            torch.FloatTensor(params).to(self.device), self.actor.parameters()
+        )

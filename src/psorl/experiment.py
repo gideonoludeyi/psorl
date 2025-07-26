@@ -7,17 +7,26 @@ from pymoo.algorithms.soo.nonconvex.pso import PSO
 from pymoo.core.population import Population
 
 from .agent import ReplayBuffer
-from .stochastic_actor_critic_learning import StochasticActorCriticLearning
 from .problem import TheProblem
-
-seed = 0
-random.seed(seed)
-np.random.seed(seed)
-torch.manual_seed(seed)
-torch.use_deterministic_algorithms(True, warn_only=True)
+from .stochastic_actor_critic_learning import StochasticActorCriticLearning
 
 
-def experiment(*, device=None, verbose=False):
+def experiment(
+    *,
+    seed: int | None = None,
+    num_agents: int = 25,
+    max_timesteps: int = 100_000,
+    exploration_ratio: float = 0.25,
+    replay_buffer_capacity: int = 10_000,
+    batch_size: int = 128,
+    device=None,
+    verbose: bool = False,
+):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.use_deterministic_algorithms(seed is not None, warn_only=seed is not None)
+
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = gym.make("LunarLander-v3")
@@ -25,15 +34,14 @@ def experiment(*, device=None, verbose=False):
     observation_dim = env.observation_space.shape[0]
 
     agents = [
-        StochasticActorCriticLearning(state_dim=observation_dim, action_dim=action_dim, device=device)
-        for _ in range(25)
+        StochasticActorCriticLearning(
+            state_dim=observation_dim, action_dim=action_dim, device=device
+        )
+        for _ in range(num_agents)
     ]
 
     vector_encoded_actors = np.asarray(
-        [
-            agent.get_actor_parameters()
-            for agent in agents
-        ]
+        [agent.get_actor_parameters() for agent in agents]
     )
 
     pso = PSO(
@@ -41,10 +49,10 @@ def experiment(*, device=None, verbose=False):
         sampling=Population.new(X=vector_encoded_actors),
         adaptive=False,
         pertube_best=False,
-        seed=0,
+        seed=seed,
     )
 
-    replay_buffer = ReplayBuffer(capacity=10_000)
+    replay_buffer = ReplayBuffer(capacity=replay_buffer_capacity)
 
     problem = TheProblem(
         env=env,
@@ -57,15 +65,13 @@ def experiment(*, device=None, verbose=False):
     )
 
     pso.setup(problem, verbose=verbose)
-    MAX_TIMESTEPS = 10_000 * 100
-    EXPLORATION_RATIO = 0.25
     L = np.zeros(pso.pop_size)
     B = np.zeros(pso.pop_size)
     t, e, b = (0, 0, 0)
     pop = pso.ask()
     pop = pso.evaluator.eval(problem, pop, algorithm=pso)
-    while t < MAX_TIMESTEPS:
-        stage = 1 if (t < MAX_TIMESTEPS * EXPLORATION_RATIO) else 2
+    while t < max_timesteps:
+        stage = 1 if (t < max_timesteps * exploration_ratio) else 2
         pso.tell(pop)
         index_list = ([e] * pso.pop_size) + list(range(pso.pop_size))
         for i in index_list:
@@ -88,13 +94,13 @@ def experiment(*, device=None, verbose=False):
                 actor_params = pop[i].X
                 agent = agents[i]
                 agent.set_actor_parameters(actor_params)
-                agent.update(replay_buffer=replay_buffer, batch_size=128)
+                agent.update(replay_buffer=replay_buffer, batch_size=batch_size)
                 pop[i].set("X", agent.get_actor_parameters())
             elif stage == 2:  # (optimize Pb via RL)
                 actor_params = pop[b].X
                 agent = agents[b]
                 agent.set_actor_parameters(actor_params)
-                agent.update(replay_buffer=replay_buffer, batch_size=128)
+                agent.update(replay_buffer=replay_buffer, batch_size=batch_size)
                 pop[b].set("X", agent.get_actor_parameters())
         if L[e] > L[b] or stage == 2:
             e = b
@@ -103,5 +109,4 @@ def experiment(*, device=None, verbose=False):
         pso.pop = pop
         pop = pso.ask()
 
-    result = pso.result()
-    return result
+    return pso.result()
