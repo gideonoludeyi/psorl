@@ -11,7 +11,7 @@ from .rl_algorithm import RLAlgorithm
 class StochasticActorCriticLearning(RLAlgorithm):
     def __init__(self, state_dim: int, action_dim: int, device: torch.device):
         self.actor = Actor(state_dim, action_dim).to(device)
-        self.critic = Critic(state_dim).to(device)
+        self.critic = Critic(state_dim, action_dim).to(device)
         self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=0.001)
         self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=0.001)
         self.device = device
@@ -30,6 +30,7 @@ class StochasticActorCriticLearning(RLAlgorithm):
         gamma: float = 0.99,
         batch_size: int = 128,
         random_state=None,
+        **kwargs,
     ):
         states, actions, rewards, next_states = replay_buffer.sample(
             batch_size=batch_size, random_state=random_state

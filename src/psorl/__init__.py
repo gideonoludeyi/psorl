@@ -1,5 +1,7 @@
 from .agent import ReplayBuffer
 from .rl_algorithm import RLAlgorithm
-from .stochastic_actor_critic_learning import StochasticActorCriticLearning
+from .td3 import TD3
 
-__all__ = ["ReplayBuffer", "RLAlgorithm", "StochasticActorCriticLearning"]
+from .td3_experiment import td3_experiment
+
+__all__ = ["ReplayBuffer", "RLAlgorithm", "TD3", "td3_experiment"]
