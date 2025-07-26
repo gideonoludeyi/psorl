@@ -8,19 +8,25 @@ from pymoo.core.population import Population
 
 from .agent import ReplayBuffer
 from .problem import TheProblem
-from .stochastic_actor_critic_learning import StochasticActorCriticLearning
+from .td3 import TD3
 
 
 def experiment(
+    env_name: str,
     *,
-    seed: int | None = None,
     num_agents: int = 25,
     max_timesteps: int = 100_000,
     exploration_ratio: float = 0.25,
     replay_buffer_capacity: int = 10_000,
     batch_size: int = 128,
+    discount: float = 0.99,
+    tau: float = 0.005,
+    policy_noise: float = 0.2,
+    noise_clip: float = 0.5,
+    policy_freq: int = 2,
     device=None,
     verbose: bool = False,
+    seed: int | None = None,
 ):
     random.seed(seed)
     np.random.seed(seed)
@@ -29,13 +35,17 @@ def experiment(
 
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    env = gym.make("LunarLander-v3")
-    action_dim = env.action_space.n
+    env = gym.make(env_name)
+    action_dim = env.action_space.shape[0]
     observation_dim = env.observation_space.shape[0]
+    max_action = float(env.action_space.high[0])
 
     agents = [
-        StochasticActorCriticLearning(
-            state_dim=observation_dim, action_dim=action_dim, device=device
+        TD3(
+            state_dim=observation_dim,
+            action_dim=action_dim,
+            max_action=max_action,
+            device=device,
         )
         for _ in range(num_agents)
     ]
@@ -94,13 +104,29 @@ def experiment(
                 actor_params = pop[i].X
                 agent = agents[i]
                 agent.set_actor_parameters(actor_params)
-                agent.update(replay_buffer=replay_buffer, batch_size=batch_size)
+                agent.update(
+                    replay_buffer=replay_buffer,
+                    discount=discount,
+                    tau=tau,
+                    policy_noise=policy_noise,
+                    noise_clip=noise_clip,
+                    policy_freq=policy_freq,
+                    batch_size=batch_size,
+                )
                 pop[i].set("X", agent.get_actor_parameters())
             elif stage == 2:  # (optimize Pb via RL)
                 actor_params = pop[b].X
                 agent = agents[b]
                 agent.set_actor_parameters(actor_params)
-                agent.update(replay_buffer=replay_buffer, batch_size=batch_size)
+                agent.update(
+                    replay_buffer=replay_buffer,
+                    discount=discount,
+                    tau=tau,
+                    policy_noise=policy_noise,
+                    noise_clip=noise_clip,
+                    policy_freq=policy_freq,
+                    batch_size=batch_size,
+                )
                 pop[b].set("X", agent.get_actor_parameters())
         if L[e] > L[b] or stage == 2:
             e = b
