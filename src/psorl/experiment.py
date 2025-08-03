@@ -7,7 +7,7 @@ from pymoo.algorithms.soo.nonconvex.pso import PSO
 from pymoo.core.population import Population
 
 from .agent import ReplayBuffer
-from .problem import TheProblem
+from .problem import TheProblem, run_episode
 from .td3 import TD3
 
 
@@ -24,6 +24,9 @@ def experiment(
     policy_noise: float = 0.2,
     noise_clip: float = 0.5,
     policy_freq: int = 2,
+    inertia_weight: float = 0,
+    cognitive_weight: float = 1,
+    social_weight: float = 1,
     device=None,
     verbose: bool = False,
     seed: int | None = None,
@@ -59,6 +62,9 @@ def experiment(
         sampling=Population.new(X=vector_encoded_actors),
         adaptive=False,
         pertube_best=False,
+        w=inertia_weight,
+        c1=cognitive_weight,
+        c2=social_weight,
         seed=seed,
     )
 
@@ -74,20 +80,45 @@ def experiment(
         device=device,
     )
 
-    pso.setup(problem, verbose=verbose)
+    template_agent = TD3(
+        state_dim=observation_dim,
+        action_dim=action_dim,
+        max_action=max_action,
+        device=device,
+    )
+    template_replay_buffer = ReplayBuffer(capacity=1)
+
+    pso.setup(problem, verbose=False)
     L = np.zeros(pso.pop_size)
     B = np.zeros(pso.pop_size)
     t, e, b = (0, 0, 0)
     pop = pso.ask()
     pop = pso.evaluator.eval(problem, pop, algorithm=pso)
     while t < max_timesteps:
-        stage = 1 if (t < max_timesteps * exploration_ratio) else 2
         pso.tell(pop)
-        index_list = ([e] * pso.pop_size) + list(range(pso.pop_size))
-        for i in index_list:
-            fitness, steps = pso.evaluator.eval(problem, pop[i], algorithm=pso).get(
-                "F", "steps"
+        pop = pso.pop
+        X, F = pop.get("X", "F")
+        best_actor_params = X[F.flatten().argmin()]
+        template_agent.set_actor_parameters(best_actor_params)
+        rewards = []
+        for _i in range(5):
+            total_reward, _ = run_episode(
+                agent=template_agent,
+                env=env,
+                replay_buffer=template_replay_buffer,
+                seed=int(seed + t + _i) if seed is not None else None,
             )
+            rewards.append(total_reward)
+        avg_score = np.mean(rewards)
+        print(
+            f"Timestep: {int(t):0>{len(str(max_timesteps))}}, Avg. of 5 episodes: {avg_score}",
+        )
+
+        stage = 1 if (t < max_timesteps * exploration_ratio) else 2
+        index_list = ([e] * pso.pop_size) + list(range(pso.pop_size))
+        pop = pso.evaluator.eval(problem, pop, algorithm=pso)
+        for i in index_list:
+            fitness, steps = pop[i].get("F", "steps")
             fitness = fitness[0]
             t += steps
             L[i] += steps
@@ -133,6 +164,9 @@ def experiment(
         # ask-and-tell is inverted because `ask()` does the PSO update
         # which happens at the end of the while-loop according to Two-Stage ERL (TERL)
         pso.pop = pop
-        pop = pso.ask()
+        # # The update frequency of PSO is 10,000 timesteps in the earlier stage and
+        # # 1,000 timesteps in the latter stage
+        if (stage == 1 and t % 10_000 == 0) or (stage == 2 and t % 1_000 == 0):
+            pop = pso.ask()
 
     return pso.result()
