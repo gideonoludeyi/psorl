@@ -18,10 +18,7 @@ dependencies = [
 psorl = "psorl.__main__:main"
 
 [dependency-groups]
-dev = [
-    "ipykernel>=6.29.5",
-    "ruff>=0.12.3",
-]
+dev = ["ipykernel>=6.29.5", "ruff>=0.12.3"]
 
 [tool.uv.sources]
-pymoo = { git = "https://github.com/gideonoludeyi/pymoo" }
+pymoo = { git = "https://github.com/anyoptimization/pymoo" }

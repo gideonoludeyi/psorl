@@ -71,8 +71,8 @@ class TD3(RLAlgorithm):
         Returns:
             np.ndarray: The selected action.
         """
-        state = torch.FloatTensor(np.reshape(state, (1, -1))).to(self.device)
-        return self.actor(state).cpu().data.numpy().flatten()
+        state_ = torch.FloatTensor(np.reshape(state, (1, -1))).to(self.device)
+        return self.actor(state_).cpu().data.numpy().flatten()
 
     def update(
         self,
@@ -84,8 +84,11 @@ class TD3(RLAlgorithm):
         policy_freq: int = 2,
         batch_size: int = 128,
         random_state=None,
+        **kwargs,
     ):
         """Performs a single optimization step on the TD3 networks.
+
+        See https://github.com/openai/spinningup/blob/038665d/spinup/algos/pytorch/td3/td3.py
 
         Args:
             replay_buffer (ReplayBuffer): The replay buffer to sample experiences from.
@@ -97,78 +100,117 @@ class TD3(RLAlgorithm):
             batch_size (int): Number of samples to draw from the replay buffer.
             random_state (int, optional): Random seed for sampling from replay buffer. Defaults to None.
         """
-        self.total_it += 1
 
         # Sample replay buffer
-        states, actions, rewards, next_states = replay_buffer.sample(
-            batch_size=batch_size, random_state=random_state
+        states, actions, rewards, next_states, dones = replay_buffer.sample(
+            batch_size=batch_size,
+            random_state=random_state,
+            return_dones=True,
         )
 
         state = torch.FloatTensor(states).to(self.device)
         action = torch.FloatTensor(actions).to(self.device)
-        reward = torch.FloatTensor(rewards).to(self.device).unsqueeze(1)
+        reward = torch.FloatTensor(rewards).unsqueeze(1).to(self.device)
         next_state = torch.FloatTensor(next_states).to(self.device)
-
-        # Select action according to policy and add clipped noise
-        noise = (torch.randn_like(action) * policy_noise).clamp(-noise_clip, noise_clip)
-
-        next_action = (self.actor_target(next_state) + noise).clamp(
-            -self.max_action, self.max_action
-        )
-
-        # Compute the target Q value
-        target_q1 = self.critic_1_target(next_state, next_action)
-        target_q2 = self.critic_2_target(next_state, next_action)
-        target_q = torch.min(target_q1, target_q2)
-        target_q = reward + discount * target_q
-
-        # Get current Q estimates
-        current_q1 = self.critic_1(state, action)
-        current_q2 = self.critic_2(state, action)
-
-        # Compute critic loss
-        critic_loss = F.mse_loss(current_q1, target_q) + F.mse_loss(
-            current_q2, target_q
-        )
+        done = torch.FloatTensor(dones).unsqueeze(1).to(self.device)
 
         # Optimize the critics
         self.critic_1_optimizer.zero_grad()
         self.critic_2_optimizer.zero_grad()
+        critic_loss = self._compute_loss_q(
+            state,
+            action,
+            reward,
+            next_state,
+            done,
+            policy_noise,
+            noise_clip,
+            discount,
+        )
         critic_loss.backward()
         self.critic_1_optimizer.step()
         self.critic_2_optimizer.step()
 
         # Delayed policy updates
+        self.total_it += 1
         if self.total_it % policy_freq == 0:
-            # Compute actor loss
-            actor_loss = -self.critic_1(state, self.actor(state)).mean()
+            for param in self.critic_1.parameters():
+                param.requires_grad = False
+            for param in self.critic_2.parameters():
+                param.requires_grad = False
 
             # Optimize the actor
             self.actor_optimizer.zero_grad()
+            actor_loss = self._compute_loss_pi(state)
             actor_loss.backward()
             self.actor_optimizer.step()
 
-            # Update the frozen target models
-            for param, target_param in zip(
-                self.critic_1.parameters(), self.critic_1_target.parameters()
-            ):
-                target_param.data.copy_(
-                    tau * param.data + (1 - tau) * target_param.data
-                )
+            for param in self.critic_1.parameters():
+                param.requires_grad = True
+            for param in self.critic_2.parameters():
+                param.requires_grad = True
 
-            for param, target_param in zip(
-                self.critic_2.parameters(), self.critic_2_target.parameters()
-            ):
-                target_param.data.copy_(
-                    tau * param.data + (1 - tau) * target_param.data
-                )
+            with torch.no_grad():
+                # Update the frozen target models
+                for param, target_param in zip(
+                    self.critic_1.parameters(), self.critic_1_target.parameters()
+                ):
+                    target_param.data.copy_(
+                        tau * param.data + (1 - tau) * target_param.data
+                    )
 
-            for param, target_param in zip(
-                self.actor.parameters(), self.actor_target.parameters()
-            ):
-                target_param.data.copy_(
-                    tau * param.data + (1 - tau) * target_param.data
-                )
+                for param, target_param in zip(
+                    self.critic_2.parameters(), self.critic_2_target.parameters()
+                ):
+                    target_param.data.copy_(
+                        tau * param.data + (1 - tau) * target_param.data
+                    )
+
+                for param, target_param in zip(
+                    self.actor.parameters(), self.actor_target.parameters()
+                ):
+                    target_param.data.copy_(
+                        tau * param.data + (1 - tau) * target_param.data
+                    )
+
+    def _compute_loss_q(
+        self,
+        states,
+        actions,
+        rewards,
+        next_states,
+        dones,
+        policy_noise,
+        noise_clip,
+        discount,
+    ):
+        # Get current Q estimates
+        q1 = self.critic_1(states, actions)
+        q2 = self.critic_2(states, actions)
+
+        # Bellman backup for Q functions
+        with torch.no_grad():
+            # Select action according to policy and add clipped noise
+            noise = (torch.randn_like(actions) * policy_noise).clamp(
+                -noise_clip, noise_clip
+            )
+            next_actions = (self.actor_target(next_states) + noise).clamp(
+                -self.max_action, self.max_action
+            )
+
+            # Compute the target Q value
+            target_q1 = self.critic_1_target(next_states, next_actions)
+            target_q2 = self.critic_2_target(next_states, next_actions)
+            backup = torch.min(target_q1, target_q2)
+            backup = rewards + discount * (1 - dones) * backup
+
+        # Compute critic loss
+        loss = F.mse_loss(q1, backup) + F.mse_loss(q2, backup)
+        return loss
+
+    def _compute_loss_pi(self, states):
+        q1_pi = self.critic_1(states, self.actor(states))
+        return -q1_pi.mean()
 
     def get_actor_parameters(self) -> np.ndarray:
         """Retrieves the current parameters of the actor network.

@@ -19,7 +19,13 @@ def run_episode(
         action = agent.select_action(observation)
         new_observation, reward, terminated, truncated, _ = env.step(action)
         total_reward += float(reward)
-        replay_buffer.push(observation, action, reward, new_observation)
+        replay_buffer.push(
+            observation,
+            action,
+            reward,
+            new_observation,
+            done=terminated or truncated,
+        )
         observation = new_observation
         steps += 1
     return total_reward, steps

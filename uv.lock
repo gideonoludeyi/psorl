@@ -1011,7 +1011,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "gymnasium", extras = ["box2d", "mujoco"], specifier = ">=1.2.0" },
-    { name = "pymoo", git = "https://github.com/gideonoludeyi/pymoo" },
+    { name = "pymoo", git = "https://github.com/anyoptimization/pymoo" },
     { name = "torch", specifier = ">=2.7.1" },
 ]
 
@@ -1097,7 +1097,7 @@ wheels = [
 [[package]]
 name = "pymoo"
 version = "0.6.1.5"
-source = { git = "https://github.com/gideonoludeyi/pymoo#cd38099adaefe2b38a295edeac1c91a7994dfba4" }
+source = { git = "https://github.com/anyoptimization/pymoo#6e1cb8833269eb87c41045d5a4d689624dd46d48" }
 dependencies = [
     { name = "alive-progress" },
     { name = "autograd" },
