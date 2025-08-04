@@ -89,7 +89,7 @@ def experiment(
     )
     template_replay_buffer = ReplayBuffer(capacity=1)
 
-    pso.setup(problem, verbose=False)
+    pso.setup(problem)
     L = np.zeros(pso.pop_size)
     B = np.zeros(pso.pop_size)
     t, e, b = (0, 0, 0)
@@ -98,7 +98,7 @@ def experiment(
         stage = 1 if (t < max_timesteps * exploration_ratio) else 2
         index_list = ([e] * pso.pop_size) + list(range(pso.pop_size))
         for i in index_list:
-            pop[i] = pso.evaluator.eval(problem, pop[i], algorithm=pso)
+            pop[i] = pso.evaluator.eval(problem, pop[i], algorithm=pso, seed=seed)
             fitness, steps = pop[i].get("F", "steps")
             fitness = fitness[0]
             t += steps
@@ -143,10 +143,10 @@ def experiment(
         if L[e] > L[b] or stage == 2:
             e = b
 
-        pop = pso.evaluator.eval(problem, pop, algorithm=pso)
+        pop = pso.evaluator.eval(problem, pop, algorithm=pso, seed=seed)
         pso.tell(pop)
 
-        perf = performance(pop, template_agent, template_replay_buffer, env)
+        perf = performance(pop, template_agent, template_replay_buffer, env, seed=seed)
         print(
             f"Timestep: {int(t):0>{len(str(max_timesteps))}}, Performance (avg. 5 episodes): {perf}",
         )
