@@ -7,7 +7,11 @@ from .rl_algorithm import RLAlgorithm
 
 
 def run_episode(
-    agent: RLAlgorithm, env: gym.Env, replay_buffer: ReplayBuffer, *, seed=None
+    agent: RLAlgorithm,
+    env: gym.Env,
+    replay_buffer: ReplayBuffer,
+    *,
+    seed: int | None = None,
 ):
     """evaluate fitness of actor's policy on an environment"""
     total_reward = 0.0

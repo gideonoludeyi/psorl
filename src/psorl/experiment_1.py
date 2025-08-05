@@ -5,6 +5,7 @@ import numpy as np
 import torch
 from pymoo.algorithms.soo.nonconvex.pso import PSO
 from pymoo.core.population import Population
+from pymoo.operators.repair.to_bound import set_to_bounds_if_outside
 
 from psorl.agent import ReplayBuffer
 from psorl.problem import TheProblem, run_episode
@@ -30,12 +31,14 @@ def experiment(
     social_weight: float = 1,
     device=None,
     seed: int | None = None,
+    out=None,  # text buffer to output logs (e.g., `io.StringIO`)
     **kwargs,
 ):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.use_deterministic_algorithms(seed is not None, warn_only=seed is not None)
+    random_state = np.random.default_rng(seed)
 
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -93,12 +96,18 @@ def experiment(
     L = np.zeros(pso.pop_size)
     B = np.zeros(pso.pop_size)
     t, e, b = (0, 0, 0)
-    pop = pso.ask()  # initialize population
+    # initialize population
+    pop = pso.ask()
+    pop = pso.evaluator.eval(problem, pop, algorithm=pso, seed=random_state)
+    pso.tell(pop)
+    # learning loop
     while t < max_timesteps:
         stage = 1 if (t < max_timesteps * exploration_ratio) else 2
         index_list = ([e] * pso.pop_size) + list(range(pso.pop_size))
         for i in index_list:
-            pop[i] = pso.evaluator.eval(problem, pop[i], algorithm=pso, seed=seed)
+            pop[i] = pso.evaluator.eval(
+                problem, pop[i], algorithm=pso, seed=random_state
+            )
             fitness, steps = pop[i].get("F", "steps")
             fitness = fitness[0]
             t += steps
@@ -112,10 +121,9 @@ def experiment(
                     b = i
                 elif stage == 2:
                     pop[b] = pop[i].copy()
-            if stage == 1:  # (optimize Pi by via RL)
-                actor_params = pop[i].X
+            if stage == 1:  # (optimize Pi by via RL) - i.e., gradient update
                 agent = agents[i]
-                agent.set_actor_parameters(actor_params)
+                agent.set_actor_parameters(pop[i].get("X"))
                 agent.update(
                     replay_buffer=replay_buffer,
                     discount=discount,
@@ -124,12 +132,12 @@ def experiment(
                     noise_clip=noise_clip,
                     policy_freq=policy_freq,
                     batch_size=batch_size,
+                    random_state=random_state,
                 )
                 pop[i].set("X", agent.get_actor_parameters())
-            elif stage == 2:  # (optimize Pb via RL)
-                actor_params = pop[b].X
+            elif stage == 2:  # (optimize Pb via RL) - i.e., gradient update
                 agent = agents[b]
-                agent.set_actor_parameters(actor_params)
+                agent.set_actor_parameters(pop[b].get("X"))
                 agent.update(
                     replay_buffer=replay_buffer,
                     discount=discount,
@@ -138,17 +146,21 @@ def experiment(
                     noise_clip=noise_clip,
                     policy_freq=policy_freq,
                     batch_size=batch_size,
+                    random_state=random_state,
                 )
                 pop[b].set("X", agent.get_actor_parameters())
         if L[e] > L[b] or stage == 2:
             e = b
 
-        pop = pso.evaluator.eval(problem, pop, algorithm=pso, seed=seed)
+        pop = pso.evaluator.eval(problem, pop, algorithm=pso, seed=random_state)
         pso.tell(pop)
 
-        perf = performance(pop, template_agent, template_replay_buffer, env, seed=seed)
+        perf = performance(
+            pop, template_agent, template_replay_buffer, env, random_state=random_state
+        )
         print(
-            f"Timestep: {int(t):0>{len(str(max_timesteps))}}, Performance (avg. 5 episodes): {perf}",
+            f"Timestep: {int(t):0>{len(str(max_timesteps))}}, Performance: {perf}",
+            file=out,
         )
 
         # ask-and-tell is inverted because `ask()` does the PSO update
@@ -162,9 +174,13 @@ def experiment(
 
 
 def performance(
-    pop, agent: RLAlgorithm, replay_buffer: ReplayBuffer, env: gym.Env, seed=None
+    pop,
+    agent: RLAlgorithm,
+    replay_buffer: ReplayBuffer,
+    env: gym.Env,
+    random_state=None,
 ):
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(random_state)
     X, F = pop.get("X", "F")
     best_actor_params = X[F.flatten().argmin()]
     agent.set_actor_parameters(best_actor_params)
@@ -178,3 +194,39 @@ def performance(
         )
         rewards.append(total_reward)
     return np.mean(rewards)
+
+
+def update_pbests(pop, pbests, out=None):
+    X, F = pop.get("X", "F")
+    P_F = pbests.get("F")
+    indices_to_update, _ = np.nonzero(F < P_F)
+    if out is None:
+        out = pbests.copy()
+    out[indices_to_update].set("X", X[indices_to_update], "F", F[indices_to_update])
+    return out
+
+
+def pso_update(
+    X, P_X, S_X, V, V_max, w=0, c1=1, c2=1, r1=None, r2=None, random_state=None
+):
+    rng = np.random.default_rng(random_state)
+
+    n_particles, n_var = np.shape(X)
+
+    if r1 is None:
+        r1 = rng.random((n_particles, n_var))
+
+    if r2 is None:
+        r2 = rng.random((n_particles, n_var))
+
+    inerta = w * V
+    cognitive = c1 * r1 * (P_X - X)
+    social = c2 * r2 * (S_X - X)
+
+    # calculate the velocity vector
+    Vp = inerta + cognitive + social
+    Vp = set_to_bounds_if_outside(Vp, -V_max, V_max)
+
+    Xp = X + Vp
+
+    return Xp, Vp
